@@ -199,6 +199,10 @@ class GPTSovitsVoicePlugin(MaiBotPlugin):
         )
         self._client = GPTSovitsClient(self._session, self.config.gpt_sovits)
         self._audio = AudioSender(self.config.general, self._project_root())
+        try:
+            await self._audio.start_http_server(self.ctx)
+        except Exception as exc:
+            self.ctx.logger.warning("启动语音 HTTP 文件服务失败: %s", exc)
         # 配置可能改了权重路径，清空缓存以强制重新切换
         self._client.reset_model_state()
         # 概率语音的随机结果也要清空，否则新旧概率会混在一起
@@ -749,7 +753,8 @@ class GPTSovitsVoicePlugin(MaiBotPlugin):
             self.ctx.logger.warning("%s 音频落盘失败，回退文字", log_prefix)
             return None, 0
 
-        return audio_path, len(audio_data)
+        audio_target = self._audio.resolve_audio_target(audio_path)
+        return audio_target, len(audio_data)
 
     async def _convert_for_intercom(
         self,
@@ -836,7 +841,7 @@ class GPTSovitsVoicePlugin(MaiBotPlugin):
         cached_text, path, at = item
         if cached_text != text or time.monotonic() - at > 15.0:
             return None
-        if not os.path.exists(path):
+        if not path.startswith(("http://", "https://")) and not os.path.exists(path):
             # 已被清理任务删掉，不能复用
             self._intercom_audio.pop(stream_id, None)
             return None

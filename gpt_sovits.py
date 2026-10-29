@@ -99,12 +99,25 @@ class GPTSovitsClient:
                 f"可参考同目录下的 config.example.toml"
             )
 
-        # 参考音频文件不存在时也提前报错，避免服务端返回难懂的异常
-        if not os.path.exists(style.refer_wav):
-            return (
-                f"风格 '{style_name}' 的参考音频不存在：{style.refer_wav}，"
-                f"请检查路径是否正确"
-            )
+        # 参考音频文件检查：仅当确定为本地服务端且路径格式与当前操作系统匹配时，
+        # 才做本地存在性校验。若服务端运行在远程机器（如 192.168.x.x）、WSL 或容器内，
+        # 音频文件存在于服务端文件系统，不能用本地 os.path.exists 拦截。
+        server = getattr(self._config, "server", "") or ""
+        if "://" not in server:
+            server = "http://" + server
+        hostname = (urllib.parse.urlparse(server).hostname or "").lower()
+        is_local_server = hostname in ("127.0.0.1", "localhost", "0.0.0.0", "::1")
+        is_cross_platform_path = (
+            (os.name == "nt" and style.refer_wav.startswith("/"))
+            or (os.name != "nt" and len(style.refer_wav) > 1 and style.refer_wav[1] == ":")
+        )
+
+        if is_local_server and not is_cross_platform_path:
+            if not os.path.exists(style.refer_wav):
+                return (
+                    f"风格 '{style_name}' 的参考音频不存在：{style.refer_wav}，"
+                    f"请检查路径是否正确"
+                )
 
         return None
 

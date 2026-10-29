@@ -29,6 +29,91 @@ class AudioSender:
         self._cleanup_tasks: set[asyncio.Task] = set()
         # 尚未清理的文件路径。任务被取消时靠它兜底删除，避免残留。
         self._pending_paths: set[str] = set()
+        self._http_runner: Optional[Any] = None
+        self._http_site: Optional[Any] = None
+        self._output_dir_cached: Optional[str] = None
+
+    async def start_http_server(self, ctx: "PluginContext") -> None:
+        """若开启 enable_http_server，启动内置的 aiohttp.web 文件服务供远端客户端下载。"""
+        if not getattr(self._config, "enable_http_server", False):
+            return
+
+        if self._http_runner is not None:
+            return
+
+        from aiohttp import web
+
+        output_dir = os.path.abspath(self._resolve_output_dir(ctx))
+        self._output_dir_cached = output_dir
+
+        async def handle_voice(request: web.Request) -> web.Response:
+            filename = request.match_info.get("filename", "")
+            if not filename or ".." in filename or "/" in filename or "\\" in filename:
+                raise web.HTTPForbidden(text="Invalid filename")
+            if not filename.endswith(".wav"):
+                raise web.HTTPForbidden(text="Invalid file type")
+
+            filepath = os.path.join(output_dir, filename)
+            if not os.path.isfile(filepath):
+                raise web.HTTPNotFound(text="Voice file not found or expired")
+
+            return web.FileResponse(filepath, headers={"Content-Type": "audio/wav"})
+
+        app = web.Application()
+        app.router.add_get("/voice/{filename}", handle_voice)
+
+        host = (getattr(self._config, "http_host", "0.0.0.0") or "0.0.0.0").strip()
+        port = int(getattr(self._config, "http_port", 9885) or 9885)
+
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, host, port)
+        await site.start()
+        self._http_runner = runner
+        self._http_site = site
+        logger.info("已启动语音 HTTP 回调服务: http://%s:%d/voice/", host, port)
+
+    async def stop_http_server(self) -> None:
+        """停止 HTTP 文件服务。"""
+        if self._http_runner is not None:
+            try:
+                await self._http_runner.cleanup()
+            except Exception as exc:
+                logger.debug("关闭语音 HTTP 服务失败: %s", exc)
+            self._http_runner = None
+            self._http_site = None
+
+    def get_public_url(self, audio_path: str) -> str:
+        """根据音频文件本地路径生成供外部客户端拉取的 HTTP 链接。"""
+        filename = os.path.basename(audio_path)
+        base = (getattr(self._config, "http_public_base", "") or "").strip().rstrip("/")
+        if not base:
+            port = int(getattr(self._config, "http_port", 9885) or 9885)
+            local_ip = self._detect_local_ip()
+            base = f"http://{local_ip}:{port}"
+        return f"{base}/voice/{filename}"
+
+    @staticmethod
+    def _detect_local_ip() -> str:
+        """探测本机在局域网内可路由的 IPv4 地址。"""
+        import socket
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("192.168.1.1", 80))
+                return s.getsockname()[0]
+        except Exception:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                    s.connect(("8.8.8.8", 80))
+                    return s.getsockname()[0]
+            except Exception:
+                return "127.0.0.1"
+
+    def resolve_audio_target(self, audio_path: str) -> str:
+        """按配置返回出站音频目标引用（HTTP URL 或本地路径）。"""
+        if getattr(self._config, "enable_http_server", False):
+            return self.get_public_url(audio_path)
+        return audio_path
 
     async def save_temp_file(self, audio_data: bytes, ctx: "PluginContext") -> Optional[str]:
         """把音频写入临时文件并安排延迟清理，返回路径供出站消息引用。"""
@@ -75,8 +160,10 @@ class AudioSender:
         if audio_path is None:
             return False, "保存音频文件失败"
 
-        await ctx.send.custom("voiceurl", audio_path, stream_id)
-        logger.info("%s 语音已发送（文件，%s，风格=%s）", log_prefix, audio_path, style_name)
+        audio_target = self.resolve_audio_target(audio_path)
+        await ctx.send.custom("voiceurl", audio_target, stream_id)
+        mode_desc = "HTTP" if getattr(self._config, "enable_http_server", False) else "文件"
+        logger.info("%s 语音已发送（%s，%s，风格=%s）", log_prefix, mode_desc, audio_target, style_name)
         return True, f"已发送语音（风格: {style_name}）"
 
     async def sweep_orphans(self, ctx: "PluginContext", *, max_age_seconds: float = 900.0) -> int:
@@ -203,6 +290,8 @@ class AudioSender:
         删文件改为一次性提交线程池并发执行：官方要求 ``on_unload`` 里
         不要做耗时操作，逐个 ``await`` 在文件多时会把卸载拖成几百毫秒。
         """
+
+        await self.stop_http_server()
 
         tasks = list(self._cleanup_tasks)
         self._cleanup_tasks.clear()

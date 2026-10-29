@@ -131,6 +131,48 @@ class GeneralConfig(PluginConfigBase):
             ),
         },
     )
+    enable_http_server: bool = Field(
+        default=False,
+        description="是否启动 HTTP 文件服务以供远端 NapCat/OneBot 拉取音频",
+        json_schema_extra={
+            "label": "启用 HTTP 文件服务",
+            "hint": (
+                "当 NapCat 部署在另一台机器或 Docker 容器内时，远端无法访问本地路径（file://）。"
+                "开启此选项后，插件会在后台启动轻量 HTTP 文件服务，将音频转换为 http:// 链接发送给 NapCat 下载。"
+            ),
+        },
+    )
+    http_host: str = Field(
+        default="0.0.0.0",
+        description="HTTP 服务监听主机",
+        json_schema_extra={
+            "label": "HTTP 监听主机",
+            "hint": "默认 0.0.0.0 允许局域网外部设备访问；若仅本地容器使用也可设为 127.0.0.1。",
+            "placeholder": "0.0.0.0",
+        },
+    )
+    http_port: int = Field(
+        default=9885,
+        description="HTTP 服务监听端口",
+        json_schema_extra={
+            "label": "HTTP 监听端口",
+            "hint": "HTTP 文件服务占用的端口，请确保端口未被占用且防火墙已放行。",
+            "placeholder": "9885",
+        },
+    )
+    http_public_base: str = Field(
+        default="",
+        description="对外暴露的 HTTP 访问基准 URL（留空则自动检测本机局域网 IP）",
+        json_schema_extra={
+            "label": "HTTP 访问公网/局域网基准地址",
+            "hint": (
+                "供远端 NapCat 下载音频的基准 URL，如 http://192.168.1.173:9885。"
+                "留空则插件会自动检测当前网卡在局域网的 IP 地址。"
+            ),
+            "placeholder": "例如 http://192.168.1.173:9885（留空自动获取）",
+        },
+    )
+
 
 
 class GPTSovitsStyle(PluginConfigBase):

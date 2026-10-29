@@ -28,6 +28,15 @@ audio_output_dir = ""
 # 合成失败时是否向用户发送错误提示
 send_error_messages = true
 
+# HTTP 文件服务：供远端 NapCat / OneBot 客户端拉取音频文件
+# 当 NapCat 部署在另一台机器或 Docker 容器内时，远端无法访问本机文件系统（file://）。
+# 开启后，插件会在后台启动轻量 HTTP 文件服务，出站语音转换为 http:// 链接，由 NapCat 自行下载转码。
+enable_http_server = false
+http_host = "0.0.0.0"       # 监听地址，0.0.0.0 允许局域网外部设备访问
+http_port = 9885            # 监听端口
+http_public_base = ""       # 对外暴露的基准 URL（如 "http://192.168.1.173:9885"），留空则自动检测本机局域网 IP
+
+
 [gpt_sovits]
 # GPT-SoVITS API 服务地址（不是 WebUI 的端口）
 server = "http://127.0.0.1:9880"
