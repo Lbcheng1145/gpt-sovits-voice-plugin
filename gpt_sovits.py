@@ -71,6 +71,23 @@ class GPTSovitsClient:
             logger.warning("%s 风格 '%s' 不存在，回退 %s", log_prefix, style, fallback)
         return fallback
 
+    def _is_local_server(self) -> bool:
+        """GPT-SoVITS 服务是否跑在本机。
+
+        远程部署时 ``refer_wav`` 是**服务器上**的路径，本地当然没有这个文件，
+        拿本地文件系统去校验只会把远程用户全挡在门外。
+        """
+
+        server = str(getattr(self._config, "server", "") or "").strip()
+        try:
+            host = (urllib.parse.urlparse(server).hostname or "").strip().lower()
+        except Exception:
+            # 解析不出来就按本机处理，保持原来那套严格校验
+            return True
+        if not host:
+            return True
+        return host in {"127.0.0.1", "localhost", "::1", "0.0.0.0", "[::1]"}
+
     def validate_style(self, style_name: str) -> Optional[str]:
         """检查风格配置是否可用，返回错误说明（可用时返回 None）。
 
@@ -99,8 +116,10 @@ class GPTSovitsClient:
                 f"可参考同目录下的 config.example.toml"
             )
 
-        # 参考音频文件不存在时也提前报错，避免服务端返回难懂的异常
-        if not os.path.exists(style.refer_wav):
+        # 只有服务跑在本机时，本地文件存在性校验才有意义。
+        # 远程服务下 refer_wav 指向的是服务器上的路径，交给服务端自己判断；
+        # 这里再拦就是「本地没有这个文件所以不让连远程」，正是用户反馈的问题。
+        if self._is_local_server() and not os.path.exists(style.refer_wav):
             return (
                 f"风格 '{style_name}' 的参考音频不存在：{style.refer_wav}，"
                 f"请检查路径是否正确"

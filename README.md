@@ -1,7 +1,10 @@
 # GPT-SoVITS 语音插件（优化版）
 
-基于本地 [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) 服务的 MaiBot 文本转语音插件。
+基于 [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) 的 MaiBot 文本转语音插件，服务跑在本机或另一台机器上都行。
 支持多音色、按内容自动选语气、按语言切换模型；LLM 可自主调用，用户也能用 `/tts` 手动触发。
+
+> 连远程服务时，`gpt_sovits.server` 填对方地址（如 `http://192.168.1.10:9880`），
+> 各风格的 `refer_wav` 和模型权重要填**服务器上**的路径——插件不会去校验本地是否存在这个文件。
 
 > MaiBot SDK 2.x（`MaiBotPlugin` + `@Tool` / `@Command` + Pydantic 配置）。
 
