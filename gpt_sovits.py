@@ -1,8 +1,9 @@
-"""GPT-SoVITS 客户端：模型权重切换与语音合成。"""
+"""GPT-SoVITS 客户端：可用性探测、模型权重切换与语音合成。"""
 
 import asyncio
 import logging
 import os
+import time
 import urllib.parse
 from typing import Dict, Optional, Tuple
 
@@ -43,6 +44,46 @@ class GPTSovitsClient:
         self._current_sovits_weights: Optional[str] = None
         # 保护「切换权重 + 合成」这一整段，防止并发请求串模型
         self._model_lock = asyncio.Lock()
+        # 「服务可用」探测成功的时间戳（monotonic）；失败不缓存
+        self._probe_ok_at: Optional[float] = None
+
+    async def ensure_available(self, log_prefix: str) -> bool:
+        """短超时探测 GPT-SoVITS 服务是否可达，失败返回 False。
+
+        GSV 常态可能没开（手动拉起 / 远程部署）：与其让请求挂满整个 timeout，
+        不如先用 probe_timeout 秒发一个探测请求 —— 只要拿到任何 HTTP 响应
+        （含 4xx 参数错误）就说明服务活着；连不上/超时/5xx 判为不可用。
+        只有「可用」才缓存（probe_cache_seconds 秒），「不可用」不缓存，
+        服务一开就立即恢复。
+        """
+
+        now = time.monotonic()
+        cache_seconds = max(getattr(self._config, "probe_cache_seconds", 0.0), 0.0)
+        if self._probe_ok_at is not None and (now - self._probe_ok_at) < cache_seconds:
+            return True
+
+        probe_url = f"{self._config.server.rstrip('/')}/tts"
+        probe_timeout = max(getattr(self._config, "probe_timeout", 2.0), 0.5)
+        try:
+            async with self._session.post(
+                probe_url,
+                json={"text": "", "text_lang": "zh"},
+                timeout=aiohttp.ClientTimeout(total=probe_timeout),
+            ) as response:
+                if response.status >= 500:
+                    logger.warning(
+                        "%s 语音服务异常[%s]，视为不可用", log_prefix, response.status,
+                    )
+                    return False
+                await response.read()
+                self._probe_ok_at = time.monotonic()
+                return True
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            logger.warning(
+                "%s 语音服务不可达 %s（%s）",
+                log_prefix, self._config.server, type(exc).__name__,
+            )
+            return False
 
     def styles(self) -> Dict[str, GPTSovitsStyle]:
         """将配置中的风格列表转换为 ``{name: style}`` 映射。"""
