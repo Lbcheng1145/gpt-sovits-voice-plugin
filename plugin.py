@@ -70,6 +70,10 @@ class GPTSovitsVoicePlugin(MaiBotPlugin):
         self._intercom = IntercomWindowManager()
         # stream_id → (文本, 音频路径, 时刻)，用于短时间内复用同一段合成结果
         self._intercom_audio: Dict[str, Tuple[str, str, float]] = {}
+        # stream_id → group_id：分群开关用的映射。
+        # 工具调用路径只给 stream_id 不给群号，所以从入站消息里学一份，
+        # 让配置里可以直接填群号（见 _learn_session_group / _is_session_allowed）。
+        self._session_group: Dict[str, str] = {}
 
     # ─── 生命周期 ────────────────────────────────────────────────────────
 
@@ -96,6 +100,7 @@ class GPTSovitsVoicePlugin(MaiBotPlugin):
             list(self._client.styles().keys()) if self._client else [],
         )
         self._check_config_ready()
+        self._check_sessions_ready()
 
         # 清理上次运行遗留的临时音频。延迟清理任务挂在旧实例上，
         # 热重载会连同 `_pending_paths` 一起丢弃，文件就永久留下了。
@@ -104,6 +109,32 @@ class GPTSovitsVoicePlugin(MaiBotPlugin):
                 await self._audio.sweep_orphans(self.ctx)
             except Exception as exc:  # noqa: BLE001 —— 清理失败不影响加载
                 self.ctx.logger.debug("清理遗留音频失败: %s", exc)
+
+    def _check_sessions_ready(self) -> None:
+        """启动时把分群开关的状态打进日志。
+
+        白名单开着却一个人都没填，等于「所有会话都禁止出语音」，
+        这种状态一定要说出来，否则会被当成插件坏了。
+        """
+
+        config = getattr(self.config, "sessions", None)
+        if config is None or not config.enabled:
+            self.ctx.logger.info("分群控制未开启：所有会话都可以出语音")
+            return
+
+        allow = [str(x).strip() for x in (config.allow or []) if str(x).strip()]
+        deny = [str(x).strip() for x in (config.deny or []) if str(x).strip()]
+        if config.mode == "whitelist":
+            if not allow:
+                self.ctx.logger.warning(
+                    "分群控制已开启但白名单为空：所有会话都不会出语音，请填写 allow"
+                )
+                return
+            self.ctx.logger.info("分群控制：白名单 %d 个会话可出语音", len(allow))
+            return
+        self.ctx.logger.info(
+            "分群控制：黑名单模式，禁止 %d 个会话（其余照旧）", len(deny),
+        )
 
     def _check_config_ready(self) -> None:
         """首次加载时检查配置是否可用，配置缺失时给出明确引导。"""
@@ -237,12 +268,14 @@ class GPTSovitsVoicePlugin(MaiBotPlugin):
     ) -> Tuple[bool, str]:
         """处理 LLM 调用的 ``tts_voice`` 工具。"""
 
+        # 工具路径宿主不给群号，只能靠入站消息学到的映射补（见 _is_session_allowed）
+        group_id = str(kwargs.get("group_id") or "").strip()
         del kwargs
         if not self._enabled():
             return False, "插件已禁用"
         if not stream_id:
             return False, "缺少 stream_id，无法发送"
-        return await self._handle(stream_id, text, style, "tool")
+        return await self._handle(stream_id, text, style, "tool", group_id)
 
     # ─── 命令：用户手动触发 ─────────────────────────────────────────────
 
@@ -269,6 +302,8 @@ class GPTSovitsVoicePlugin(MaiBotPlugin):
             这里按宿主实行为准——命令由插件独占处理，一律返回 True。
         """
 
+        # 命令路径宿主会传顶层 group_id，分群开关可以直接按群号判定
+        group_id = str(kwargs.get("group_id") or "").strip()
         del kwargs
         if not self._enabled():
             return False, "插件已禁用", True
@@ -287,7 +322,7 @@ class GPTSovitsVoicePlugin(MaiBotPlugin):
             await self._send_error(stream_id, "请输入要转换为语音的文本内容")
             return False, "缺少文本内容", True
 
-        success, message = await self._handle(stream_id, user_text, user_style, "command")
+        success, message = await self._handle(stream_id, user_text, user_style, "command", group_id)
         return success, message, True
 
     # ─── 公共处理链路 ────────────────────────────────────────────────────
@@ -298,11 +333,18 @@ class GPTSovitsVoicePlugin(MaiBotPlugin):
         text: str,
         style: str,
         source_desc: str,
+        group_id: str = "",
     ) -> Tuple[bool, str]:
         """公共合成发送链路：Tool 与 Command 共用。"""
 
         log_prefix = f"[gpt_sovits_voice][{source_desc}][{stream_id}]"
         try:
+            # 分群开关：放在最前面，命中就直接出局，不做任何合成开销
+            if not self._is_session_allowed(stream_id, group_id):
+                self.ctx.logger.info("%s 该会话未开启语音（分群开关），已拒绝", log_prefix)
+                # 工具是 LLM 自主调用，不该往群里说话；命令是用户主动发的，给一句反馈
+                return False, ("" if source_desc == "tool" else "本群未开启语音")
+
             if self._client is None or self._audio is None:
                 return False, "插件尚未完成加载"
 
@@ -526,12 +568,15 @@ class GPTSovitsVoicePlugin(MaiBotPlugin):
         返回 ``None`` 表示不干预消息内容。
         """
 
-        config = getattr(self.config, "intercom", None)
-        if config is None or not config.enabled or not self._enabled():
-            return None
-
         message = kwargs.get("message")
         if not isinstance(message, dict):
+            return None
+        # 先记下「会话 → 群号」的对应关系：工具与出站路径拿不到群号，
+        # 分群开关要靠这份映射才能按群号匹配。放在所有开关判断之前，保证必学。
+        self._learn_session_group(message)
+
+        config = getattr(self.config, "intercom", None)
+        if config is None or not config.enabled or not self._enabled():
             return None
 
         transcript, is_voice = self._extract_voice_transcript(message)
@@ -619,6 +664,53 @@ class GPTSovitsVoicePlugin(MaiBotPlugin):
             return False
         return isinstance(info.get("group_info"), dict)
 
+    # ─── 分群开关 ────────────────────────────────────────────────────────
+
+    def _learn_session_group(self, message: Dict[str, Any]) -> None:
+        """从入站消息里记下「会话 ID → 群号」的对应关系。
+
+        宿主只在命令路径传 ``group_id``，工具调用只给 ``stream_id``；
+        这里顺手学一份映射，配置里就能直接填群号而不必去查会话哈希。
+        """
+
+        if not isinstance(message, dict):
+            return
+        info = message.get("message_info")
+        if not isinstance(info, dict):
+            return
+        group_info = info.get("group_info")
+        if not isinstance(group_info, dict):
+            return
+        group_id = str(group_info.get("group_id") or "").strip()
+        stream_id = str(message.get("session_id") or "").strip()
+        if group_id and stream_id and self._session_group.get(stream_id) != group_id:
+            self._session_group[stream_id] = group_id
+
+    def _is_session_allowed(self, stream_id: str, group_id: str = "") -> bool:
+        """这个会话是否允许出语音。
+
+        四条出口（``/tts`` 命令、LLM 工具、概率语音、语音对讲）统一走这里。
+        总开关关闭时一律放行，保持安装即用的原行为。
+        """
+
+        config = getattr(self.config, "sessions", None)
+        if config is None or not config.enabled:
+            return True
+
+        sid = str(stream_id or "").strip()
+        gid = str(group_id or "").strip() or self._session_group.get(sid, "")
+        keys = {k for k in (sid, gid) if k}
+
+        # 黑名单优先级最高：同时出现在两边时按禁止处理
+        deny = {str(x).strip() for x in (config.deny or []) if str(x).strip()}
+        if keys & deny:
+            return False
+        if config.mode == "blacklist":
+            return True
+
+        allow = {str(x).strip() for x in (config.allow or []) if str(x).strip()}
+        return bool(keys & allow)
+
     @HookHandler(
         "send_service.before_send",
         name="gpt_sovits_random_voice",
@@ -670,6 +762,11 @@ class GPTSovitsVoicePlugin(MaiBotPlugin):
 
         stream_id = str(kwargs.get("stream_id") or message.get("session_id") or "").strip()
         if not stream_id:
+            return None
+
+        # 分群开关：本会话没开语音就原样放行文字（对讲与概率语音都在此之后）
+        if not self._is_session_allowed(stream_id):
+            self.ctx.logger.debug("概率语音/对讲跳过[%s]：该会话未开启语音", stream_id)
             return None
 
         # ── 路径 1：语音对讲优先 ──────────────────────────────────────
