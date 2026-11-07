@@ -6,7 +6,7 @@
 > 连远程服务时，`gpt_sovits.server` 填对方地址（如 `http://192.168.1.10:9880`），
 > 各风格的 `refer_wav` 和模型权重要填**服务器上**的路径——插件不会去校验本地是否存在这个文件。
 
-> MaiBot SDK 2.x（`MaiBotPlugin` + `@Tool` / `@Command` + Pydantic 配置）。
+> MaiBot 1.x（1.4.0 已验证）· MaiBot SDK 2.x（2.21.0 已验证；`MaiBotPlugin` + `@Tool` / `@Command` + Pydantic 配置）。
 
 ---
 
