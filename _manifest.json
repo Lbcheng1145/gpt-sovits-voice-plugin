@@ -11,17 +11,17 @@
       "fallback": "mic"
     }
   },
-  "description": "基于 GPT-SoVITS 的文本转语音插件，本机或远程服务均可。本版由 Lbcheng1145 基于 CGl123/gpt-sovits-voice-plugin（原作者 CGl123）优化而来。含语音对讲（收到语音后一段时间内的回复都用语音发出，入站消息正常入库）、按内容自动选语气、按语言切换模型、纯数字专用风格、概率自动语音、语速控制、文本清洗、音频校验等功能。注意：本插件与原版 CGl123.gpt-sovits-voice-plugin 功能重叠且共用同一套配置与命令，二者互斥，请勿同时安装。",
+  "description": "基于 GPT-SoVITS 的文本转语音插件，本机或远程服务均可。本版由 Akenari011 基于 CGl123/gpt-sovits-voice-plugin（原作者 CGl123）优化而来。含语音对讲（收到语音后一段时间内的回复都用语音发出，入站消息正常入库）、按内容自动选语气、按语言切换模型、纯数字专用风格、概率自动语音、语速控制、文本清洗、音频校验等功能。注意：本插件与原版 CGl123.gpt-sovits-voice-plugin 功能重叠且共用同一套配置与命令，二者互斥，请勿同时安装。",
   "author": {
-    "name": "Lbcheng1145",
-    "url": "https://github.com/Lbcheng1145"
+    "name": "Akenari011",
+    "url": "https://github.com/Akenari011"
   },
   "license": "AGPL-3.0-or-later",
   "urls": {
-    "repository": "https://github.com/Lbcheng1145/gpt-sovits-voice-plugin",
-    "homepage": "https://github.com/Lbcheng1145/gpt-sovits-voice-plugin",
-    "documentation": "https://github.com/Lbcheng1145/gpt-sovits-voice-plugin/blob/main/README.md",
-    "issues": "https://github.com/Lbcheng1145/gpt-sovits-voice-plugin/issues"
+    "repository": "https://github.com/Akenari011/gpt-sovits-voice-plugin",
+    "homepage": "https://github.com/Akenari011/gpt-sovits-voice-plugin",
+    "documentation": "https://github.com/Akenari011/gpt-sovits-voice-plugin/blob/main/README.md",
+    "issues": "https://github.com/Akenari011/gpt-sovits-voice-plugin/issues"
   },
   "host_application": {
     "min_version": "1.0.0",

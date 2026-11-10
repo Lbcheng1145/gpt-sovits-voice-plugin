@@ -576,7 +576,7 @@ git tag v1.6.0 && git push origin v1.6.0
 语音对讲、语速控制、文本清洗、音频校验、配置校验、并发保护，
 以及首字吞字、临时音频残留、总开关失效等问题的修复。
 
-**本版本独立维护**，问题请反馈到[本仓库 Issues](https://github.com/Lbcheng1145/gpt-sovits-voice-plugin/issues)。
+**本版本独立维护**，问题请反馈到[本仓库 Issues](https://github.com/Akenari011/gpt-sovits-voice-plugin/issues)。
 若不需要这些新增功能，建议直接使用原版。
 
 [AGPL-3.0](LICENSE)
