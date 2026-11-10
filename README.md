@@ -14,7 +14,7 @@
 
 | | 插件 ID |
 |---|---|
-| **本插件（优化版）** | `github.lbcheng1145.gpt-sovits-voice-plugin` |
+| **本插件（优化版）** | `github.akenari011.gpt-sovits-voice-plugin` |
 | 原版 | `CGl123.gpt-sovits-voice-plugin` |
 
 两者功能完全重叠，同时启用会出故障：
@@ -287,7 +287,7 @@ enable_asr = true
 
 ```python
 res = await self.ctx.api.call(
-    "github.lbcheng1145.gpt-sovits-voice-plugin.set_voice_active",
+    "github.akenari011.gpt-sovits-voice-plugin.set_voice_active",
     stream_id="4d12676e...",
     active=True,
     seconds=300,
