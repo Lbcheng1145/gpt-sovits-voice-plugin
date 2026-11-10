@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "id": "github.lbcheng1145.gpt-sovits-voice-plugin",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "plugin_type": "media",
   "name": "GPT-SoVITS 语音插件（优化版）",
   "display": {
@@ -29,7 +29,7 @@
   },
   "sdk": {
     "min_version": "2.0.0",
-    "max_version": "2.21.99"
+    "max_version": "2.22.99"
   },
   "dependencies": [
     {
