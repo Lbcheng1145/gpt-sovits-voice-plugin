@@ -791,6 +791,65 @@ class IntercomConfig(PluginConfigBase):
     )
 
 
+class SessionsConfig(PluginConfigBase):
+    """分群开关：控制哪些会话允许出语音。
+
+    四条出语音的路径（``/tts`` 命令、LLM 工具、概率语音、语音对讲）统一受这里约束，
+    避免在某些群里误发语音。
+    """
+
+    __ui_label__ = "分群开关"
+    __ui_icon__ = "filter"
+    __ui_order__ = 5
+
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "开启后按下面的名单限制可用语音的会话。"
+            "关闭时保持原行为：所有会话都能用 /tts 和自动语音"
+        ),
+        json_schema_extra={
+            "label": "启用分群控制",
+            "hint": (
+                "关闭 = 和以前一样，全群可用。"
+                "开启后只按名单放行或拦截，四条出语音的路径都会生效。"
+            ),
+        },
+    )
+    mode: Literal["whitelist", "blacklist"] = Field(
+        default="whitelist",
+        description="whitelist=只允许名单内的会话；blacklist=只禁止名单内的会话",
+        json_schema_extra={
+            "label": "名单模式",
+            "hint": (
+                "白名单：名单里能发语音，其余全禁（推荐，防误发）；"
+                "黑名单：名单里禁，其余照旧。"
+            ),
+        },
+    )
+    allow: List[str] = Field(
+        default_factory=list,
+        description="白名单：允许出语音的群号或会话 ID，逗号分隔",
+        json_schema_extra={
+            "label": "白名单",
+            "hint": (
+                "填 QQ 群号即可（如 1015610655），插件会自己记下群号与会话的对应关系。"
+                "私聊请填会话 ID，或用 /tts 在该会话里发一次后看日志。"
+            ),
+            "placeholder": "1015610655, 862129543",
+        },
+    )
+    deny: List[str] = Field(
+        default_factory=list,
+        description="黑名单：禁止出语音的群号或会话 ID，优先级高于白名单",
+        json_schema_extra={
+            "label": "黑名单",
+            "hint": "命中这里的会话一律不出语音，即使同时出现在白名单里。",
+            "placeholder": "禁止的群号",
+        },
+    )
+
+
 class PluginConfig(PluginConfigBase):
     """插件总配置。"""
 
@@ -804,4 +863,8 @@ class PluginConfig(PluginConfigBase):
     intercom: IntercomConfig = Field(
         default_factory=IntercomConfig,
         description="语音对讲：收到语音后一段时间内的回复都用语音",
+    )
+    sessions: SessionsConfig = Field(
+        default_factory=SessionsConfig,
+        description="分群开关：限制哪些会话允许出语音",
     )
