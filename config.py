@@ -131,6 +131,43 @@ class GeneralConfig(PluginConfigBase):
             ),
         },
     )
+    unavailable_hint: str = Field(
+        default=(
+            "语音这会儿发不出去。不要重试这个工具，也不要再说要发语音；"
+            "直接改用文字回复，并用你平时的口吻自然地顺带一句现在说不了话"
+            "（比如「嗓子哑了」「今天没开麦」之类），一句带过就行。"
+            "不要解释原因，不要提到插件、接口、服务、模型、端口这些技术词，"
+            "也不要反复道歉，说完就正常接着聊。"
+        ),
+        description="语音服务不可用时返回给 LLM 的指令（工具路径）",
+        json_schema_extra={
+            "label": "不可用时给模型的指令",
+            "hint": (
+                "tts_voice 工具失败时返回给 LLM 的文案，指导它别重试、改用文字回复。"
+                "按自己 bot 的口吻写，别出现技术词。"
+            ),
+            "x-widget": "textarea",
+        },
+    )
+    unavailable_notice: str = Field(
+        default="（语音服务暂时不可用，先打字聊吧）",
+        description="语音服务不可用时发给用户的一句提示（命令路径）",
+        json_schema_extra={
+            "label": "不可用时发给用户的提示",
+            "hint": "命令路径触发降级时发给用户的一句话；留空则不发。",
+            "x-widget": "textarea",
+        },
+    )
+    silent_on_unavailable: bool = Field(
+        default=True,
+        description="语音服务不可用时命令路径是否完全静默",
+        json_schema_extra={
+            "label": "不可用时命令静默",
+            "hint": (
+                "开启后命令路径不发任何提示（工具路径不受影响，仍会把指令交给 LLM）。"
+            ),
+        },
+    )
 
 
 class GPTSovitsStyle(PluginConfigBase):
@@ -460,6 +497,47 @@ class GPTSovitsConfig(PluginConfigBase):
                 "超时不会重试，只会返回失败提示。"
             ),
             "placeholder": "60",
+        },
+    )
+    availability_probe: bool = Field(
+        default=True,
+        description="合成前是否先做短超时可用性探测",
+        json_schema_extra={
+            "label": "可用性探测",
+            "hint": (
+                "开启后在每次合成前用短超时探测服务是否可达，"
+                "失败直接走降级而不是挂满整个超时。GSV 不是常开的部署建议保持开启。"
+            ),
+        },
+    )
+    probe_timeout: float = Field(
+        default=2.0,
+        description="可用性探测超时（秒）",
+        json_schema_extra={
+            "label": "探测超时（秒）",
+            "hint": "别调大，否则服务没开时每次都要白等这么久。",
+            "placeholder": "2.0",
+        },
+    )
+    probe_cache_seconds: float = Field(
+        default=8.0,
+        description="「服务可用」判定结果的缓存秒数",
+        json_schema_extra={
+            "label": "探测缓存（秒）",
+            "hint": "只缓存「可用」；「不可用」不缓存，服务一开就立即恢复。",
+            "placeholder": "8.0",
+        },
+    )
+    expose_style_enum: bool = Field(
+        default=True,
+        description="是否把配置里的真实风格名注入 tts_voice 的 style 参数枚举",
+        json_schema_extra={
+            "label": "注入风格枚举",
+            "hint": (
+                "开启后 tts_voice 的 style 参数会带上 [[gpt_sovits.styles]] 里的真实风格名，"
+                "模型不用再按 description 里的示例名猜；关闭则保持原行为。"
+                "改 styles 配置后需要重载插件才会刷新枚举。"
+            ),
         },
     )
     model_version: ModelVersion = Field(

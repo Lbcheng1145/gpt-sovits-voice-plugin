@@ -205,6 +205,80 @@ class GPTSovitsVoicePlugin(MaiBotPlugin):
         self._decider.reset()
         self._missing_styles_warned = False
 
+    # ─── 组件注册：按配置把真实风格名注入 style 参数的枚举 ───────────────
+
+    def _available_style_names(self) -> List[str]:
+        """读当前配置里的风格名（default 排最前）。
+
+        组件注册发生在配置注入之后，正常情况下这里能读到真实风格；
+        若配置尚未注入，返回空列表，让上层跳过注入。
+        """
+
+        try:
+            configured = list(self.config.gpt_sovits.styles or [])
+        except Exception:  # 配置未注入 / 字段缺失时不能让注册整体失败
+            return []
+
+        names: List[str] = []
+        for style in configured:
+            name = str(getattr(style, "name", "") or "").strip()
+            if name and name not in names:
+                names.append(name)
+
+        if "default" in names:
+            names.remove("default")
+            names.insert(0, "default")
+        return names
+
+    def get_components(self) -> List[Dict[str, Any]]:
+        """在 SDK 产出的组件声明上补齐「真实风格名」（expose_style_enum 开启时）。
+
+        宿主会丢弃 @Tool 的 detailed_description，工具默认 deferred，
+        Planner 只看得到一句很短的 description —— style 参数里如果不带
+        真实风格名，模型只能按 description 里的示例猜，猜不中会被
+        resolve_style 回退 default，部署方配置的风格等于没生效。
+        """
+
+        components = super().get_components()
+        if not getattr(self.config.gpt_sovits, "expose_style_enum", True):
+            return components
+
+        style_names = self._available_style_names()
+        if not style_names:
+            logger.info("GPT-SoVITS 风格列表暂不可读，跳过 style enum 注入")
+            return components
+
+        enum_hint = "、".join(style_names)
+        for component in components:
+            if str(component.get("name", "")) != "tts_voice":
+                continue
+            metadata = component.get("metadata")
+            if not isinstance(metadata, dict):
+                continue
+
+            parameters = metadata.get("parameters")
+            if isinstance(parameters, list):
+                for parameter in parameters:
+                    if not isinstance(parameter, dict):
+                        continue
+                    if str(parameter.get("name", "")) != "style":
+                        continue
+                    parameter["enum_values"] = list(style_names)
+                    parameter["description"] = (
+                        "语音风格，可选。请从 enum 里挑一个最贴合当前情绪的；"
+                        "不传则按文本内容自动选语气"
+                    )
+
+            base_desc = str(
+                metadata.get("description") or metadata.get("brief_description") or ""
+            ).strip()
+            metadata["description"] = (
+                f"{base_desc}（可选语音风格：{enum_hint}；不传用 default）"
+            ).strip()
+
+        logger.info("GPT-SoVITS 已把 %d 个风格名注入 tts_voice.style enum", len(style_names))
+        return components
+
     # ─── 工具：LLM 自主调用 ──────────────────────────────────────────────
 
     @Tool(
@@ -306,6 +380,17 @@ class GPTSovitsVoicePlugin(MaiBotPlugin):
             if self._client is None or self._audio is None:
                 return False, "插件尚未完成加载"
 
+            # 语音服务可能没开（GSV 由用户手动拉起 / 远程部署常态不在线）：
+            # 先短超时探测，失败直接降级，别让请求挂满整个 timeout 再把
+            # 技术错误抛给模型或用户。
+            if getattr(self.config.gpt_sovits, "availability_probe", True):
+                try:
+                    available = await self._client.ensure_available(log_prefix)
+                except Exception:  # 探测自身出错不拦合成，交给真实请求判定
+                    available = True
+                if not available:
+                    return await self._degrade(stream_id, source_desc, log_prefix)
+
             # 先清洗不可见字符（零宽符等会导致 GPT-SoVITS 侧 GBK 编码失败）
             original = (text or "").strip()
             raw_text = clean_text(original)
@@ -366,6 +451,10 @@ class GPTSovitsVoicePlugin(MaiBotPlugin):
             self.ctx.logger.error("%s TTS 超时（%ss）", log_prefix, timeout_sec)
             await self._send_error(stream_id, f"语音合成超时（{timeout_sec}s）")
             return False, "timeout"
+        except aiohttp.ClientConnectionError as exc:
+            # 连接类失败 = 服务没开/网络不通，走降级而不是把原始异常抛出去
+            self.ctx.logger.error("%s 语音服务连接失败: %s", log_prefix, exc)
+            return await self._degrade(stream_id, source_desc, log_prefix)
         except aiohttp.ClientError as exc:
             self.ctx.logger.error("%s TTS 网络错误: %s", log_prefix, exc)
             await self._send_error(stream_id, f"语音合成网络错误: {type(exc).__name__}")
@@ -386,6 +475,27 @@ class GPTSovitsVoicePlugin(MaiBotPlugin):
             )
             await self._send_error(stream_id, "语音合成发生内部错误")
             return False, str(exc)
+
+    async def _degrade(
+        self,
+        stream_id: str,
+        source_desc: str,
+        log_prefix: str,
+    ) -> Tuple[bool, str]:
+        """语音服务不可用时的统一降级出口。
+
+        工具路径把 ``unavailable_hint``（给 LLM 的指令）作为失败消息返回，
+        Planner 看得到并能改用文字回复；命令路径按 ``silent_on_unavailable``
+        决定要不要给用户发一句 ``unavailable_notice``。
+        """
+
+        del log_prefix
+        general = self.config.general
+        if source_desc == "tool":
+            return False, general.unavailable_hint
+        if not general.silent_on_unavailable and (general.unavailable_notice or "").strip():
+            await self.ctx.send.text(general.unavailable_notice, stream_id)
+        return False, "语音服务不可用"
 
     # ─── 概率语音：拦截出站文字并转成语音 ──────────────────────────────
 
